@@ -42,14 +42,12 @@
     }
     .tag:hover{ background:#181818 }
     .note{
-      position:absolute; left:50%; transform:translateX(-50%);
-      bottom:8px; z-index:1000; color:#ddd; font:12px system-ui; opacity:.85;
+      position:absolute; left:50%; transform:translateX(-50%); bottom:8px;
+      z-index:1000; color:#ddd; font:12px system-ui; opacity:.85;
     }
     .radiance-tiles { filter: brightness(1.8) contrast(1.35); }
     .blackmarble-tiles { filter: brightness(1.15) contrast(1.15); }
-    .parish-label{
-      color:#9ccfff; font:12px system-ui; text-shadow:0 0 6px rgba(0,0,0,.9);
-    }
+    .parish-label{ color:#9ccfff; font:12px system-ui; text-shadow:0 0 6px rgba(0,0,0,.9); }
     .warn { color:#ffd966; font-size:12px; margin-top:6px; }
   </style>
 </head>
@@ -93,22 +91,16 @@
   // ---------- CONFIG ---------------------------------------------------------
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
 
-  // >>> SET THIS to your deployed Vercel function URL (no trailing slash).
-  // e.g. "https://moravax-echo-proxy.vercel.app/api/echo"
-  const ECHO_PROXY_BASE = "https://YOUR-VERCEL-APP.vercel.app/api/echo";
+  // Your Vercel proxy base (CHANGE if your domain differs)
+  const ECHO_PROXY_BASE = 'https://moravax-echo-proxy.vercel.app/api/echo';
 
-  // If (and only if) you want to fall back to direct ECHO (not recommended),
-  // put your api.data.gov key here; otherwise leave blank.
-  const API_DATA_GOV_KEY_FALLBACK = "";
-
-  // NASA GIBS dates
   const VIIRS_DATE_RADIANCE = '2024-12-31';
   const BLACK_MARBLE_DATE   = '2024-01-01';
 
-  // Louisiana bounds (approx): SW [lat,lng], NE [lat,lng]
+  // Louisiana bounds
   const LA_BOUNDS = L.latLngBounds([28.5, -94.1], [33.1, -88.7]);
 
-  // AOI rectangle for River Parishes corridor
+  // AOI rectangle
   const AOI = [
     [30.60, -91.60],
     [30.60, -90.00],
@@ -116,27 +108,27 @@
     [29.50, -91.60]
   ];
 
-  // Rough parish boxes (placeholder labels)
+  // Rough parish boxes (placeholder)
   const ROUGH_PARISHES_GEOJSON = {
     "type":"FeatureCollection",
     "features":[
       { "type":"Feature", "properties":{ "name":"St. John the Baptist (rough)" },
-        "geometry":{"type":"Polygon","coordinates":[[[-90.65,30.18],[-90.25,30.18],[-90.25,29.92],[-90.65,29.92],[-90.65,30.18]]]}},
+        "geometry":{"type":"Polygon","coordinates":[[[-90.65,30.18],[-90.25,30.18],[-90.25,29.92],[-90.65,29.92],[-90.65,30.18]]]}} ,
       { "type":"Feature", "properties":{ "name":"St. James (rough)" },
-        "geometry":{"type":"Polygon","coordinates":[[[-91.10,30.12],[-90.70,30.12],[-90.70,29.85],[-91.10,29.85],[-91.10,30.12]]]}},
+        "geometry":{"type":"Polygon","coordinates":[[[-91.10,30.12],[-90.70,30.12],[-90.70,29.85],[-91.10,29.85],[-91.10,30.12]]]}} ,
       { "type":"Feature", "properties":{ "name":"St. Charles (rough)" },
         "geometry":{"type":"Polygon","coordinates":[[[-90.50,30.10],[-90.17,30.10],[-90.17,29.75],[-90.50,29.75],[-90.50,30.10]]]}}
     ]
   };
 
-  // ---------- UTIL: bounded tile layer (blank outside bounds) ----------------
+  // ---------- UTIL: bounded tile layer (blank outside LA) --------------------
   const BLANK_PNG =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 
   const BoundedTileLayer = L.TileLayer.extend({
     initialize: function (urlTemplate, options) {
       L.TileLayer.prototype.initialize.call(this, urlTemplate, options);
-      this._allowed = options.allowedBounds;   // L.LatLngBounds
+      this._allowed = options.allowedBounds;
     },
     getTileUrl: function (coords) {
       const b = this._tileCoordsToBounds(coords);
@@ -148,27 +140,23 @@
   // ---------- MAP INIT -------------------------------------------------------
   const map = L.map('map', { zoomControl: true, minZoom: 6, maxZoom: 18 });
 
-  // Basemap
   const mapboxDark = L.tileLayer(
     `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,
     { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }
   ).addTo(map);
 
-  // Bounded VIIRS overlay (limited to Louisiana)
   const viirsRadiance = new BoundedTileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE_RADIANCE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
     { tileSize: 256, opacity: 0.75, className:'radiance-tiles', crossOrigin:true,
       attribution:'NASA VIIRS DNB Radiance', allowedBounds: LA_BOUNDS }
   );
 
-  // Black Marble overlay (kept global, typically used at parish zooms)
   const blackMarble = L.tileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
     { tileSize: 256, opacity: 0.75, className:'blackmarble-tiles', crossOrigin:true,
       attribution:'NASA Black Marble' }
   );
 
-  // Context: AOI + rough parish boxes/labels
   const aoiPoly = L.polygon(AOI, { color:'#9cf', weight:2, fill:false, dashArray:'6,4' }).addTo(map);
   const parishes = L.geoJSON(ROUGH_PARISHES_GEOJSON, {
     style: { color:'#8bd', weight:1.5, fill:false, dashArray:'4,6' },
@@ -178,9 +166,7 @@
     }
   }).addTo(map);
 
-  // Facilities cluster layer
   const clusters = L.markerClusterGroup({ chunkedLoading:true, spiderfyOnMaxZoom:true });
-
   const defaultIcon = L.icon({
     iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
     iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -188,11 +174,10 @@
     iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[0,-30], shadowSize:[41,41]
   });
 
-  // Fit initial view and set a crisp default zoom for lights
   map.fitBounds(aoiPoly.getBounds(), { padding:[20,20] });
   if (map.getZoom() > 9) map.setZoom(9);
 
-  // ---------------- UI: radio + opacity + bookmarks -------------------------
+  // ---------------- UI -------------------------------------------------------
   const radios = Array.from(document.querySelectorAll('input[name="ol"]'));
   const opacity = document.getElementById('opacity');
   const zoomHint = document.getElementById('zoomHint');
@@ -210,7 +195,6 @@
     blackMarble.setOpacity(+opacity.value);
   });
 
-  // Bookmarks
   const jumps = {
     aoi:  aoiPoly.getBounds(),
     denka: L.latLngBounds([ [30.12,-90.60], [30.02,-90.40] ]),
@@ -224,7 +208,6 @@
     });
   });
 
-  // ---------------- Scale-aware overlay visibility --------------------------
   function applyScaleRules() {
     const z = map.getZoom();
     const chosen = radios.find(r => r.checked)?.value;
@@ -243,54 +226,43 @@
   setOverlayFromRadio();
   applyScaleRules();
 
-  // ---------------- Live ECHO fetch via PROXY -------------------------------
-  // Vercel function: forwards query to ECHO, injects your api.data.gov key, adds CORS.
-  // Fallback (if proxy not set): call ECHO directly with key in browser (not recommended).
+  // ---------------- Load facilities via the proxy ----------------------------
   async function loadEchoFacilities() {
-    const useProxy = ECHO_PROXY_BASE && ECHO_PROXY_BASE.startsWith("http");
-    const target = useProxy
-      ? ECHO_PROXY_BASE                                  // e.g. https://your-app.vercel.app/api/echo
-      : "https://echo.epa.gov/echo/rest_services.get_facility_info";
-
     try {
       echoStatus.style.display='block';
       echoStatus.textContent='Loading EPA ECHO facilities for Louisiana…';
 
       const params = new URLSearchParams({
+        endpoint: 'rest_services.get_facility_info',
         state_abbr: 'LA',
         output: 'JSON',
         pageno: '1',
         pagesize: '10000'
       });
-      if (!useProxy && API_DATA_GOV_KEY_FALLBACK) {
-        params.set('api_key', API_DATA_GOV_KEY_FALLBACK);
-      }
 
-      const url = `${target}?${params.toString()}`;
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+      const url = `${ECHO_PROXY_BASE}?${params.toString()}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
 
-      if (!res.ok) throw new Error(`ECHO ${res.status} ${res.statusText}`);
+      if (!res.ok) throw new Error(`Proxy ${res.status} ${res.statusText}`);
       const data = await res.json();
 
-      // Typical shapes from ECHO: Results.Facilities or Facilities
       const facilities =
         (data.Results && data.Results.Facilities) ||
         data.Facilities || [];
 
-      let count=0;
+      let count = 0;
       facilities.forEach(f => {
         const lat = parseFloat(f.Latitude || f.fac_lat || f.Lat);
         const lon = parseFloat(f.Longitude || f.fac_long || f.Lon || f.Long);
         if (Number.isFinite(lat) && Number.isFinite(lon) && LA_BOUNDS.contains([lat,lon])) {
           const name = f.FacilityName || f.FacName || f.name || 'Facility';
           const frs  = f.FRSId || f.FRS || f.RegistryId || '';
-          const program = (f.Program || f.Sect || f.SourceType || 'EPA-regulated').toString();
           const dfrLink = frs
             ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}`
             : 'https://echo.epa.gov/facilities/facility-search';
 
           const m = L.marker([lat,lon], { icon: defaultIcon })
-            .bindPopup(`<b>${name}</b><br>${program}<br><a href="${dfrLink}" target="_blank">EPA Detailed Facility Report ↗</a>`);
+            .bindPopup(`<b>${name}</b><br><a href="${dfrLink}" target="_blank">EPA Detailed Facility Report ↗</a>`);
           clusters.addLayer(m);
           count++;
         }
@@ -312,7 +284,6 @@
     L.marker(e.latlng).addTo(map).bindPopup(`<b>GPS</b> ${s}`).openPopup();
   });
 
-  // Nudge layout once tiles begin to load
   setTimeout(() => map.invalidateSize(true), 60);
 })();
 </script>
