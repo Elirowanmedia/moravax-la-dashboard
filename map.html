@@ -7,6 +7,12 @@
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
   <style>
     html, body { height:100%; margin:0; background:#0b0f12; }
     #map{ height:100%; }
@@ -23,7 +29,7 @@
     .control-card{
       position:absolute; top:12px; right:12px; z-index:1000;
       background:rgba(0,0,0,.78); color:#fff; padding:10px 12px; border-radius:10px;
-      width:270px; box-shadow:0 2px 10px rgba(0,0,0,.25);
+      width:300px; box-shadow:0 2px 10px rgba(0,0,0,.25);
       font:13px system-ui,-apple-system,Segoe UI,Roboto,Arial;
     }
     .control-card h3{ margin:0 0 6px 0; font-size:14px; font-weight:700 }
@@ -44,25 +50,23 @@
     .parish-label{
       color:#9ccfff; font:12px system-ui; text-shadow:0 0 6px rgba(0,0,0,.9);
     }
+    .warn { color:#ffd966; font-size:12px; margin-top:6px; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Title -->
   <div class="panel-title">
     <b>Moravax Louisiana Pilot</b><br>
     <small>AOI: River Parishes — New Orleans ⇄ Baton Rouge</small>
   </div>
 
-  <!-- Legend -->
   <div class="legend">
     <div><b>Night-lights overlays</b></div>
     <div>• <b>VIIRS Radiance</b> — bright, for regional view (zoom ≤ 8)</div>
     <div>• <b>Black Marble</b> — subtle, for parish view (9–12)</div>
   </div>
 
-  <!-- Controls -->
   <div class="control-card" id="controls">
     <h3>Layers</h3>
     <label><input type="radio" name="ol" value="viirs" checked> VIIRS DNB Radiance (bright)</label>
@@ -78,6 +82,8 @@
       <div class="tag" data-jump="br">Baton Rouge</div>
       <div class="tag" data-jump="nola">New Orleans</div>
     </div>
+
+    <div id="echoStatus" class="warn" style="display:none;"></div>
   </div>
 
   <div class="note" id="zoomHint" style="display:none;">Night-lights render at regional zooms (≤ 8). Zoom out to see them.</div>
@@ -86,10 +92,24 @@
 (function () {
   // ---------- CONFIG ---------------------------------------------------------
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
-  const VIIRS_DATE_RADIANCE = '2024-12-31'; // daily/near-real-time composite
-  const BLACK_MARBLE_DATE   = '2024-01-01'; // annual product
+  const API_DATA_GOV_KEY = 'GFxGg3nhpZpZXZ5hrcgj3fS9ladYISGM4F75PGvR'; // your key
 
-  // Approx River Parishes rectangle AOI
+  // ECHO base (documented under ECHO Web Services; endpoints are namespaced)
+  // See: Web Services overview and All Media Programs Facility Search. :contentReference[oaicite:0]{index=0}
+  const ECHO_BASE = 'https://echodata.epa.gov/echo';
+
+  // We'll use the cross-program "all data" search that returns facilities with lat/lon.
+  // Endpoint: rest_services.get_facility_info (JSON). (ECHO docs & API directory references.) :contentReference[oaicite:1]{index=1}
+  // Minimal query here: state_abbr=LA, output=JSON. You can add more filters later.
+  const ECHO_ENDPOINT = `${ECHO_BASE}/rest_services.get_facility_info`;
+
+  const VIIRS_DATE_RADIANCE = '2024-12-31';
+  const BLACK_MARBLE_DATE   = '2024-01-01';
+
+  // Louisiana bounds (approx): SW [lat,lng], NE [lat,lng]
+  const LA_BOUNDS = L.latLngBounds([28.5, -94.1], [33.1, -88.7]);
+
+  // AOI rectangle for River Parishes corridor
   const AOI = [
     [30.60, -91.60],
     [30.60, -90.00],
@@ -97,7 +117,7 @@
     [29.50, -91.60]
   ];
 
-  // Rough parish boxes (replace with real GeoJSON when available)
+  // Rough parish boxes (placeholder labels)
   const ROUGH_PARISHES_GEOJSON = {
     "type":"FeatureCollection",
     "features":[
@@ -110,78 +130,65 @@
     ]
   };
 
-  // Facilities (sample)
-  const SITES = [
-    {
-      name: "Denka Performance Elastomer (LaPlace)",
-      program: "CAA / Synthetic Rubber",
-      coords: [30.068, -90.485],
-      link: "https://echo.epa.gov/detailed-facility-report?fid=110000349321"
+  // ---------- UTIL: bounded tile layer (returns blank tile outside bounds) ---
+  const BLANK_PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+
+  const BoundedTileLayer = L.TileLayer.extend({
+    initialize: function (urlTemplate, options) {
+      L.TileLayer.prototype.initialize.call(this, urlTemplate, options);
+      this._allowed = options.allowedBounds;   // L.LatLngBounds
     },
-    {
-      name: "ExxonMobil Baton Rouge Refinery (cluster)",
-      program: "CAA/CWA",
-      coords: [30.457, -91.186],
-      link: "https://echo.epa.gov/detailed-facility-report?fid=110000608532"
-    },
-    {
-      name: "Shell / Norco (cluster)",
-      program: "CAA/CWA",
-      coords: [29.999, -90.418],
-      link: "https://echo.epa.gov/detailed-facility-report?fid=110000463847"
+    getTileUrl: function (coords) {
+      const b = this._tileCoordsToBounds(coords);
+      if (!b.intersects(this._allowed)) return BLANK_PNG;
+      return L.TileLayer.prototype.getTileUrl.call(this, coords);
     }
-  ];
+  });
 
   // ---------- MAP INIT -------------------------------------------------------
   const map = L.map('map', { zoomControl: true, minZoom: 6, maxZoom: 18 });
 
-  // Basemap: Mapbox Dark (raster tiles)
+  // Basemap
   const mapboxDark = L.tileLayer(
     `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,
     { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }
   ).addTo(map);
 
-  // NASA overlays (WMTS)
-  const viirsRadiance = L.tileLayer(
+  // Bounded overlays (VIIRS bounded to LA)
+  const viirsRadiance = new BoundedTileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE_RADIANCE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
-    { tileSize: 256, opacity: 0.75, className: 'radiance-tiles', crossOrigin: true,
-      attribution: 'NASA VIIRS DNB Radiance' }
+    { tileSize: 256, opacity: 0.75, className:'radiance-tiles', crossOrigin:true,
+      attribution:'NASA VIIRS DNB Radiance', allowedBounds: LA_BOUNDS }
   );
 
   const blackMarble = L.tileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
-    { tileSize: 256, opacity: 0.75, className: 'blackmarble-tiles', crossOrigin: true,
-      attribution: 'NASA Black Marble' }
+    { tileSize: 256, opacity: 0.75, className:'blackmarble-tiles', crossOrigin:true,
+      attribution:'NASA Black Marble' }
   );
 
-  // AOI + rough parishes
+  // Context: AOI + rough parish boxes/labels
   const aoiPoly = L.polygon(AOI, { color:'#9cf', weight:2, fill:false, dashArray:'6,4' }).addTo(map);
-
   const parishes = L.geoJSON(ROUGH_PARISHES_GEOJSON, {
     style: { color:'#8bd', weight:1.5, fill:false, dashArray:'4,6' },
     onEachFeature: (feat, layer) => {
       const c = layer.getBounds().getCenter();
-      L.marker(c, {
-        interactive:false,
-        icon: L.divIcon({ className:'parish-label', html: feat.properties.name })
-      }).addTo(map);
+      L.marker(c, {interactive:false, icon:L.divIcon({className:'parish-label', html:feat.properties.name})}).addTo(map);
     }
   }).addTo(map);
 
-  // Facilities
-  const siteIcon = L.icon({
-    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  // Facilities cluster layer (starts empty; filled after ECHO fetch)
+  const clusters = L.markerClusterGroup({ chunkedLoading:true, spiderfyOnMaxZoom:true });
+
+  const defaultIcon = L.icon({
+    iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
     iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[0,-30], shadowSize:[41,41]
   });
-  const sitesLayer = L.layerGroup(SITES.map(s => {
-    const m = L.marker([s.coords[0], s.coords[1]], { icon: siteIcon });
-    m.bindPopup(`<b>${s.name}</b><br>${s.program}<br><a href="${s.link}" target="_blank">EPA record ↗</a>`);
-    return m;
-  })).addTo(map);
 
-  // Fit initial view to AOI at a “sweet spot” zoom ~9
+  // Fit initial view nicely
   map.fitBounds(aoiPoly.getBounds(), { padding:[20,20] });
   if (map.getZoom() > 9) map.setZoom(9);
 
@@ -189,6 +196,7 @@
   const radios = Array.from(document.querySelectorAll('input[name="ol"]'));
   const opacity = document.getElementById('opacity');
   const zoomHint = document.getElementById('zoomHint');
+  const echoStatus = document.getElementById('echoStatus');
 
   function setOverlayFromRadio() {
     const chosen = radios.find(r => r.checked)?.value;
@@ -196,7 +204,7 @@
     if (chosen === 'viirs') viirsRadiance.addTo(map);
     if (chosen === 'bm')    blackMarble.addTo(map);
   }
-  radios.forEach(r => r.addEventListener('change', setOverlayFromRadio));
+  radios.forEach(r => r.addEventListener('change', () => { setOverlayFromRadio(); applyScaleRules(); }));
   opacity.addEventListener('input', () => {
     viirsRadiance.setOpacity(+opacity.value);
     blackMarble.setOpacity(+opacity.value);
@@ -211,19 +219,15 @@
   };
   document.querySelectorAll('.tag').forEach(el => {
     el.addEventListener('click', () => {
-      const key = el.getAttribute('data-jump');
-      const b = jumps[key];
+      const b = jumps[el.getAttribute('data-jump')];
       if (b) map.fitBounds(b, { padding:[20,20] });
     });
   });
 
   // ---------------- Scale-aware overlay visibility --------------------------
-  // VIIRS is useful at regional zooms; Black Marble at mid-zooms.
   function applyScaleRules() {
     const z = map.getZoom();
     const chosen = radios.find(r => r.checked)?.value;
-
-    // Show hint if user chose VIIRS but zoomed in too far
     zoomHint.style.display = (chosen === 'viirs' && z > 8) ? 'block' : 'none';
 
     if (chosen === 'viirs') {
@@ -239,14 +243,69 @@
   setOverlayFromRadio();
   applyScaleRules();
 
-  // ---------------- Quality-of-life -----------------------------------------
-  // Click to drop temporary GPS marker (for quick field notes)
+  // ---------------- Live ECHO fetch (All Media Programs → facilities) -------
+  // API docs entry points: ECHO Web Services (All Media Programs). You must include your api.data.gov key. :contentReference[oaicite:2]{index=2}
+  async function loadEchoFacilities() {
+    try {
+      echoStatus.style.display='block';
+      echoStatus.textContent='Loading EPA ECHO facilities for Louisiana…';
+
+      // Minimal cross-program facility info (state-level). Many more params available in docs.
+      // Common params: state_abbr=LA, output=JSON, pageno=&pagesize=
+      const params = new URLSearchParams({
+        state_abbr: 'LA',
+        output: 'JSON',
+        pageno: '1',
+        pagesize: '10000', // pull a big page; adjust as needed
+        api_key: API_DATA_GOV_KEY
+      });
+
+      const url = `${ECHO_ENDPOINT}?${params.toString()}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+
+      if (!res.ok) throw new Error(`ECHO ${res.status} ${res.statusText}`);
+      const data = await res.json();
+
+      // The ECHO "get_facility_info" style responses typically nest results under Results or Facilities arrays. :contentReference[oaicite:3]{index=3}
+      const facilities =
+        (data.Results && data.Results.Facilities) ||
+        data.Facilities || [];
+
+      let count=0;
+      facilities.forEach(f => {
+        const lat = parseFloat(f.Latitude || f.fac_lat || f.Lat);
+        const lon = parseFloat(f.Longitude || f.fac_long || f.Lon || f.Long);
+        if (Number.isFinite(lat) && Number.isFinite(lon) && LA_BOUNDS.contains([lat,lon])) {
+          const name = f.FacilityName || f.FacName || f.name || 'Facility';
+          const frs  = f.FRSId || f.FRS || f.RegistryId || '';
+          const program = (f.Program || f.Sect || f.SourceType || 'EPA-regulated').toString();
+          const dfrLink = frs
+            ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}`
+            : 'https://echo.epa.gov/facilities/facility-search';
+
+          const m = L.marker([lat,lon], { icon: defaultIcon })
+            .bindPopup(`<b>${name}</b><br>${program}<br><a href="${dfrLink}" target="_blank">EPA Detailed Facility Report ↗</a>`);
+          clusters.addLayer(m);
+          count++;
+        }
+      });
+
+      map.addLayer(clusters);
+      echoStatus.textContent = `EPA ECHO: ${count.toLocaleString()} facilities plotted (LA).`;
+    } catch (err) {
+      console.error(err);
+      echoStatus.textContent =
+        'EPA ECHO: could not load live facilities (rate limit, CORS, or network). Map still works without points.';
+    }
+  }
+  loadEchoFacilities();
+
+  // Quick GPS pin
   map.on('click', (e) => {
     const s = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
     L.marker(e.latlng).addTo(map).bindPopup(`<b>GPS</b> ${s}`).openPopup();
   });
 
-  // Ensure tiles lay out cleanly after first render
   setTimeout(() => map.invalidateSize(true), 60);
 })();
 </script>
