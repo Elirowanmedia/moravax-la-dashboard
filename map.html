@@ -92,17 +92,16 @@
 (function () {
   // ---------- CONFIG ---------------------------------------------------------
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
-  const API_DATA_GOV_KEY = 'GFxGg3nhpZpZXZ5hrcgj3fS9ladYISGM4F75PGvR'; // your key
 
-  // ECHO base (documented under ECHO Web Services; endpoints are namespaced)
-  // See: Web Services overview and All Media Programs Facility Search. :contentReference[oaicite:0]{index=0}
-  const ECHO_BASE = 'https://echodata.epa.gov/echo';
+  // >>> SET THIS to your deployed Vercel function URL (no trailing slash).
+  // e.g. "https://moravax-echo-proxy.vercel.app/api/echo"
+  const ECHO_PROXY_BASE = "https://YOUR-VERCEL-APP.vercel.app/api/echo";
 
-  // We'll use the cross-program "all data" search that returns facilities with lat/lon.
-  // Endpoint: rest_services.get_facility_info (JSON). (ECHO docs & API directory references.) :contentReference[oaicite:1]{index=1}
-  // Minimal query here: state_abbr=LA, output=JSON. You can add more filters later.
-  const ECHO_ENDPOINT = `${ECHO_BASE}/rest_services.get_facility_info`;
+  // If (and only if) you want to fall back to direct ECHO (not recommended),
+  // put your api.data.gov key here; otherwise leave blank.
+  const API_DATA_GOV_KEY_FALLBACK = "";
 
+  // NASA GIBS dates
   const VIIRS_DATE_RADIANCE = '2024-12-31';
   const BLACK_MARBLE_DATE   = '2024-01-01';
 
@@ -130,7 +129,7 @@
     ]
   };
 
-  // ---------- UTIL: bounded tile layer (returns blank tile outside bounds) ---
+  // ---------- UTIL: bounded tile layer (blank outside bounds) ----------------
   const BLANK_PNG =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 
@@ -155,13 +154,14 @@
     { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }
   ).addTo(map);
 
-  // Bounded overlays (VIIRS bounded to LA)
+  // Bounded VIIRS overlay (limited to Louisiana)
   const viirsRadiance = new BoundedTileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE_RADIANCE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
     { tileSize: 256, opacity: 0.75, className:'radiance-tiles', crossOrigin:true,
       attribution:'NASA VIIRS DNB Radiance', allowedBounds: LA_BOUNDS }
   );
 
+  // Black Marble overlay (kept global, typically used at parish zooms)
   const blackMarble = L.tileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
     { tileSize: 256, opacity: 0.75, className:'blackmarble-tiles', crossOrigin:true,
@@ -178,7 +178,7 @@
     }
   }).addTo(map);
 
-  // Facilities cluster layer (starts empty; filled after ECHO fetch)
+  // Facilities cluster layer
   const clusters = L.markerClusterGroup({ chunkedLoading:true, spiderfyOnMaxZoom:true });
 
   const defaultIcon = L.icon({
@@ -188,7 +188,7 @@
     iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[0,-30], shadowSize:[41,41]
   });
 
-  // Fit initial view nicely
+  // Fit initial view and set a crisp default zoom for lights
   map.fitBounds(aoiPoly.getBounds(), { padding:[20,20] });
   if (map.getZoom() > 9) map.setZoom(9);
 
@@ -243,30 +243,36 @@
   setOverlayFromRadio();
   applyScaleRules();
 
-  // ---------------- Live ECHO fetch (All Media Programs → facilities) -------
-  // API docs entry points: ECHO Web Services (All Media Programs). You must include your api.data.gov key. :contentReference[oaicite:2]{index=2}
+  // ---------------- Live ECHO fetch via PROXY -------------------------------
+  // Vercel function: forwards query to ECHO, injects your api.data.gov key, adds CORS.
+  // Fallback (if proxy not set): call ECHO directly with key in browser (not recommended).
   async function loadEchoFacilities() {
+    const useProxy = ECHO_PROXY_BASE && ECHO_PROXY_BASE.startsWith("http");
+    const target = useProxy
+      ? ECHO_PROXY_BASE                                  // e.g. https://your-app.vercel.app/api/echo
+      : "https://echo.epa.gov/echo/rest_services.get_facility_info";
+
     try {
       echoStatus.style.display='block';
       echoStatus.textContent='Loading EPA ECHO facilities for Louisiana…';
 
-      // Minimal cross-program facility info (state-level). Many more params available in docs.
-      // Common params: state_abbr=LA, output=JSON, pageno=&pagesize=
       const params = new URLSearchParams({
         state_abbr: 'LA',
         output: 'JSON',
         pageno: '1',
-        pagesize: '10000', // pull a big page; adjust as needed
-        api_key: API_DATA_GOV_KEY
+        pagesize: '10000'
       });
+      if (!useProxy && API_DATA_GOV_KEY_FALLBACK) {
+        params.set('api_key', API_DATA_GOV_KEY_FALLBACK);
+      }
 
-      const url = `${ECHO_ENDPOINT}?${params.toString()}`;
+      const url = `${target}?${params.toString()}`;
       const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
 
       if (!res.ok) throw new Error(`ECHO ${res.status} ${res.statusText}`);
       const data = await res.json();
 
-      // The ECHO "get_facility_info" style responses typically nest results under Results or Facilities arrays. :contentReference[oaicite:3]{index=3}
+      // Typical shapes from ECHO: Results.Facilities or Facilities
       const facilities =
         (data.Results && data.Results.Facilities) ||
         data.Facilities || [];
@@ -306,6 +312,7 @@
     L.marker(e.latlng).addTo(map).bindPopup(`<b>GPS</b> ${s}`).openPopup();
   });
 
+  // Nudge layout once tiles begin to load
   setTimeout(() => map.invalidateSize(true), 60);
 })();
 </script>
