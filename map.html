@@ -1,76 +1,67 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Moravax Louisiana Pilot</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-hash@0.2.2/leaflet-hash.js"></script>
+  <title>Moravax Louisiana Pilot Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
   <style>
-    html, body, #map { height:100%; margin:0 }
-    .legend { position:absolute; bottom:12px; left:12px; background:#111; color:#fff;
-              padding:10px 12px; font:13px system-ui; border-radius:12px; opacity:.92 }
-    .legend a{color:#9ad;text-decoration:none}
+    body { margin: 0; padding: 0; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    .mapboxgl-ctrl-top-right { margin-top: 60px; } /* push controls lower */
   </style>
 </head>
 <body>
-<div id="map"></div>
-<script>
-  const TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
+  <div id="map"></div>
 
-  // Mapbox dark raster tiles as basemap
-  const mapboxDark = L.tileLayer(
-    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=${TOKEN}`,
-    { maxZoom: 18, attribution: '© OpenStreetMap · © Mapbox' }
-  );
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+  <script>
+    // 🔑 Your Mapbox public token
+    mapboxgl.accessToken = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
 
-  const map = L.map('map', { center:[30.14,-90.79], zoom:8, layers:[mapboxDark] });
-  new L.Hash(map);
-  L.control.zoom({ position:'topleft' }).addTo(map);
-
-  // NASA VIIRS night lights (Black Marble)
-  const TIME = '2024-12-31';
-  const viirs = L.tileLayer(
-    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${TIME}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
-    { tileSize:256, opacity:0.65, attribution:'NASA GIBS VIIRS' }
-  ).addTo(map);
-
-  // EPA ECHO Facilities (ArcGIS MapServer) — all programs (layer 0)
-  const echoUrl = 'https://echogeo.epa.gov/arcgis/rest/services/ECHO/Facilities/MapServer';
-  const echo = L.esri.dynamicMapLayer({ url: echoUrl, layers:[0], opacity:0.95 }).addTo(map);
-
-  // Click → identify → popup with Detailed Facility Report link
-  map.on('click', (e) => {
-    echo.identify().on(map).at(e.latlng).layers('visible:0').tolerance(6).run((err, fc) => {
-      if (err || !fc || !fc.features || !fc.features.length) return;
-      const a = fc.features[0].properties || fc.features[0].attributes || {};
-      const frs = a.FRSID || '';
-      const name = a.FAC_NAME || 'Facility';
-      const city = a.CITY || ''; const state = a.STATE || '';
-      const dfr = frs ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}` : null;
-      L.popup({maxWidth: 320}).setLatLng(e.latlng).setContent(
-        `<div style="min-width:220px">
-           <b>${name}</b><br/>${city?city+', ':''}${state}<br/>
-           ${dfr ? `<div style="margin-top:8px"><a target="_blank" rel="noopener" href="${dfr}">Open Detailed Facility Report ↗</a></div>` : ''}
-         </div>`
-      ).openOn(map);
+    // Initialize map
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/dark-v11', // Dark basemap
+      center: [-90.5, 30.0], // Louisiana River Parishes approx
+      zoom: 7
     });
-  });
 
-  // Layer control + legend
-  L.control.layers(
-    { 'Mapbox Dark': mapboxDark },
-    { 'VIIRS Night Lights': viirs, 'ECHO Facilities': echo },
-    { collapsed:true }
-  ).addTo(map);
+    // Add navigation controls
+    map.addControl(new mapboxgl.NavigationControl());
 
-  const legend = L.control({position:'bottomleft'}); legend.onAdd = () => {
-    const d = L.DomUtil.create('div','legend');
-    d.innerHTML = '<b>Moravax Louisiana Pilot</b><br/>Night-lights (NASA VIIRS) + EPA ECHO Facilities';
-    return d;
-  }; legend.addTo(map);
-</script>
+    // Once map loads, add overlays
+    map.on('load', () => {
+      // NASA VIIRS Black Marble (night lights)
+      map.addSource('viirs-night', {
+        'type': 'raster',
+        'tiles': [
+          'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/{time}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg'
+        ],
+        'tileSize': 256,
+        'attribution': 'NASA Black Marble'
+      });
+
+      // Default time = latest available (2024-01-01 as safe fallback)
+      map.addLayer({
+        'id': 'viirs-layer',
+        'type': 'raster',
+        'source': 'viirs-night',
+        'layout': { 'visibility': 'visible' },
+        'paint': { 'raster-opacity': 0.75 }
+      });
+
+      // Example Markers: Baton Rouge + New Orleans
+      new mapboxgl.Marker({ color: 'red' })
+        .setLngLat([-91.1403, 30.4583]) // Baton Rouge
+        .setPopup(new mapboxgl.Popup().setText('Baton Rouge'))
+        .addTo(map);
+
+      new mapboxgl.Marker({ color: 'orange' })
+        .setLngLat([-90.0715, 29.9511]) // New Orleans
+        .setPopup(new mapboxgl.Popup().setText('New Orleans'))
+        .addTo(map);
+    });
+  </script>
 </body>
 </html>
