@@ -8,50 +8,64 @@
   <style>
     body { margin: 0; padding: 0; }
     #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-    .mapboxgl-ctrl-top-right { margin-top: 60px; } /* push controls lower */
+    .legend {
+      position: absolute;
+      bottom: 15px;
+      left: 15px;
+      background: rgba(20,20,20,0.9);
+      color: #fff;
+      padding: 10px 14px;
+      font: 13px/1.3 system-ui, sans-serif;
+      border-radius: 10px;
+      box-shadow: 0 0 8px rgba(0,0,0,0.4);
+    }
+    .legend input { margin-right: 5px; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div class="legend">
+    <div><b>Moravax Pilot Layers</b></div>
+    <label><input type="checkbox" id="toggleViirs" checked> NASA VIIRS Night Lights</label>
+  </div>
 
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
   <script>
-    // 🔑 Your Mapbox public token
+    // 🔑 Your Mapbox token
     mapboxgl.accessToken = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
 
-    // Initialize map
+    // Initialize base map
     const map = new mapboxgl.Map({
       container: 'map',
-      style: 'mapbox://styles/mapbox/dark-v11', // Dark basemap
-      center: [-90.5, 30.0], // Louisiana River Parishes approx
+      style: 'mapbox://styles/mapbox/dark-v11',
+      center: [-90.5, 30.0], // Louisiana corridor
       zoom: 7
     });
 
-    // Add navigation controls
     map.addControl(new mapboxgl.NavigationControl());
 
-    // Once map loads, add overlays
+    // Add NASA VIIRS overlay once map loads
     map.on('load', () => {
-      // NASA VIIRS Black Marble (night lights)
+      const time = '2024-12-31'; // Safe fallback composite
+
       map.addSource('viirs-night', {
         'type': 'raster',
         'tiles': [
-          'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/{time}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg'
+          `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${time}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`
         ],
         'tileSize': 256,
         'attribution': 'NASA Black Marble'
       });
 
-      // Default time = latest available (2024-01-01 as safe fallback)
       map.addLayer({
         'id': 'viirs-layer',
         'type': 'raster',
         'source': 'viirs-night',
         'layout': { 'visibility': 'visible' },
-        'paint': { 'raster-opacity': 0.75 }
+        'paint': { 'raster-opacity': 0.7 }
       });
 
-      // Example Markers: Baton Rouge + New Orleans
+      // Add anchor markers
       new mapboxgl.Marker({ color: 'red' })
         .setLngLat([-91.1403, 30.4583]) // Baton Rouge
         .setPopup(new mapboxgl.Popup().setText('Baton Rouge'))
@@ -61,6 +75,14 @@
         .setLngLat([-90.0715, 29.9511]) // New Orleans
         .setPopup(new mapboxgl.Popup().setText('New Orleans'))
         .addTo(map);
+    });
+
+    // Toggle NASA VIIRS on/off
+    document.getElementById('toggleViirs').addEventListener('change', (e) => {
+      const visibility = e.target.checked ? 'visible' : 'none';
+      if (map.getLayer('viirs-layer')) {
+        map.setLayoutProperty('viirs-layer', 'visibility', visibility);
+      }
     });
   </script>
 </body>
