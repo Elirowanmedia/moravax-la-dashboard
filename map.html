@@ -7,178 +7,135 @@
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Esri Leaflet (we’ll use it lazily) -->
-  <script defer src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
-  <!-- Permalink (hash) -->
-  <script src="https://unpkg.com/leaflet-hash@0.2.2/leaflet-hash.js"></script>
   <style>
-    html, body, #map { height:100%; margin:0 }
-    .panel, .title { z-index: 1000; }
-    .panel {
-      position:absolute; left:12px; bottom:12px;
-      background:#111; color:#fff; border-radius:12px;
-      padding:10px 12px; font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
-      box-shadow:0 2px 10px rgba(0,0,0,.35); opacity:.96;
+    html, body { height:100%; margin:0 }
+    #map{ height:100%; }
+    .panel-title{
+      position:absolute; top:12px; left:12px; z-index:1000;
+      background:rgba(0,0,0,.78); color:#fff; padding:8px 10px; border-radius:10px;
+      font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial; box-shadow:0 2px 10px rgba(0,0,0,.25);
     }
-    .panel label { display:block; margin-top:6px; cursor:pointer }
     .radiance-tiles { filter: brightness(1.8) contrast(1.35); }
     .blackmarble-tiles { filter: brightness(1.15) contrast(1.15); }
-    .title {
-      position:absolute; top:12px; left:12px;
-      background:rgba(0,0,0,.78); color:#fff; padding:8px 10px;
-      border-radius:10px; font:14px/1.35 system-ui,Arial; box-shadow:0 2px 10px rgba(0,0,0,.25);
-    }
-    .toast {
-      position: absolute; right: 12px; bottom: 12px; z-index: 1001;
-      background:#222; color:#fff; padding:8px 10px; border-radius:10px;
-      font:12px system-ui; box-shadow:0 2px 10px rgba(0,0,0,.25); display:none;
-    }
-    .copy-btn {
+    .copy-btn{
       margin-top:6px; background:#333; color:#fff; border:0; border-radius:6px; padding:4px 8px; cursor:pointer;
     }
-    .copy-btn:hover { background:#444; }
+    .copy-btn:hover{ background:#444; }
   </style>
 </head>
 <body>
-<div id="map"></div>
-<div class="title">
-  <b>Moravax Louisiana Pilot</b><br>
-  <small>AOI: River Parishes — New Orleans ⇄ Baton Rouge</small>
-</div>
-<div id="toast" class="toast"></div>
+  <div id="map"></div>
+  <div class="panel-title">
+    <b>Moravax Louisiana Pilot</b><br>
+    <small>AOI: River Parishes — New Orleans ⇄ Baton Rouge</small>
+  </div>
 
 <script>
 (function () {
-  // --- helpers ---------------------------------------------------------------
-  function toast(msg, ms=2200){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',ms); }
-  function onReady(fn){ (document.readyState==='complete'||document.readyState==='interactive')? setTimeout(fn,0) : document.addEventListener('DOMContentLoaded',fn); }
-
-  // --- map init --------------------------------------------------------------
-  const map = L.map('map', { zoomControl:true });
-
-  // basemap (swap for Mapbox Dark if you want)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    maxZoom:19, attribution:'© OpenStreetMap'
-  }).addTo(map);
-
-  // keep view in URL
-  const hash = new L.Hash(map);
-
-  // If the URL has no #hash, set a sane default view (fits AOI later anyway)
-  if (!location.hash || location.hash.length < 5){
-    map.setView([30.15, -90.75], 7);
-  }
-
-  // Invalidate size once rendered to avoid the “grey canvas” race
-  onReady(()=> setTimeout(()=> map.invalidateSize(true), 50));
-
-  // --- NASA night lights -----------------------------------------------------
-  const VIIRS_DATE = '2024-12-31';
-  const viirsRadiance = L.tileLayer(
-    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
-    { tileSize:256, opacity:0.85, className:'radiance-tiles', attribution:'NASA VIIRS DNB Radiance' }
-  ).addTo(map);
-
-  const BLACK_MARBLE_DATE = '2024-01-01';
-  const blackMarble = L.tileLayer(
-    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
-    { tileSize:256, opacity:0.80, className:'blackmarble-tiles', attribution:'NASA Black Marble' }
-  );
-
-  // --- AOI polygon (approx rectangle) ---------------------------------------
-  const aoiCoords = [
+  // ---------- CONFIG ---------------------------------------------------------
+  const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
+  const VIIRS_DATE_RADIANCE = '2024-12-31'; // daily/near-real-time composite
+  const BLACK_MARBLE_DATE   = '2024-01-01'; // annual product
+  // Approx River Parishes bbox polygon (NO ⇄ BR corridor)
+  const AOI = [
     [30.60, -91.60],
     [30.60, -90.00],
     [29.50, -90.00],
     [29.50, -91.60]
   ];
-  const aoi = L.polygon(aoiCoords, { color:'#9cf', weight:2, opacity:0.9, fill:false, dashArray:'6,4' }).addTo(map);
-  // Fit once tiles start (gives nicer UX)
-  viirsRadiance.on('load', ()=> { if(!location.hash||location.hash.length<5) map.fitBounds(aoi.getBounds(), {padding:[20,20]}); });
 
-  // --- EPA ECHO (lazy) -------------------------------------------------------
-  let echoLayer = null;
-  function ensureEcho(){
-    if (echoLayer || !window.L || !window.L.esri){ return !!window.L && !!window.L.esri; }
-    try{
-      const url = 'https://echogeo.epa.gov/arcgis/rest/services/ECHO/Facilities/MapServer';
-      echoLayer = L.esri.dynamicMapLayer({ url, layers:[0], opacity:1.0 });
-      return true;
-    }catch(e){
-      return false;
+  // ---------- MAP INIT -------------------------------------------------------
+  const map = L.map('map', { zoomControl: true, minZoom: 6, maxZoom: 18 });
+
+  // Parse simple #z/lat/lng hash
+  function applyHash() {
+    const h = location.hash.replace('#','').split('/');
+    if (h.length === 3) {
+      const z = +h[0], lat = +h[1], lng = +h[2];
+      if (!Number.isNaN(z) && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+        map.setView([lat, lng], z);
+        return true;
+      }
     }
+    return false;
+  }
+  // Update hash on move
+  map.on('moveend', () => {
+    const c = map.getCenter();
+    const z = map.getZoom();
+    location.replace(`#${z}/${c.lat.toFixed(5)}/${c.lng.toFixed(5)}`);
+  });
+
+  // Basemap: Mapbox Dark (raster tiles)
+  const mapboxDark = L.tileLayer(
+    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,
+    { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }
+  );
+
+  // Fallback: OSM
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: '© OpenStreetMap' });
+
+  // If Mapbox errors, swap to OSM once
+  let swapped = false;
+  mapboxDark.on('tileerror', () => {
+    if (!swapped) {
+      swapped = true;
+      map.removeLayer(mapboxDark);
+      osm.addTo(map);
+    }
+  });
+  mapboxDark.addTo(map);
+
+  // NASA GIBS overlays (WMTS) — pure raster tiles, no keys needed
+  const viirsRadiance = L.tileLayer(
+    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE_RADIANCE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
+    { tileSize: 256, opacity: 0.85, className: 'radiance-tiles', crossOrigin: true,
+      attribution: 'NASA VIIRS DNB Radiance' }
+  );
+
+  const blackMarble = L.tileLayer(
+    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
+    { tileSize: 256, opacity: 0.80, className: 'blackmarble-tiles', crossOrigin: true,
+      attribution: 'NASA Black Marble' }
+  );
+
+  // AOI boundary
+  const aoiPoly = L.polygon(AOI, { color:'#9cf', weight:2, fill:false, dashArray:'6,4' });
+
+  // Fit start view (or honor hash if present)
+  if (!applyHash()) {
+    map.fitBounds(aoiPoly.getBounds(), { padding: [20,20] });
   }
 
-  // --- UI panel --------------------------------------------------------------
-  const panel = L.control({ position:'bottomleft' });
-  panel.onAdd = () => {
-    const d = L.DomUtil.create('div', 'panel');
-    d.innerHTML = `
-      <b>Moravax Pilot Layers</b>
-      <div style="margin-top:6px; opacity:.85">Night lights overlay:</div>
-      <label><input type="radio" name="nasa" value="radiance" checked> VIIRS DNB Radiance (bright)</label>
-      <label><input type="radio" name="nasa" value="blackmarble"> Black Marble (subtle)</label>
-      <div style="margin-top:10px; opacity:.85">Context:</div>
-      <label><input id="aoiToggle" type="checkbox" checked> AOI Boundary</label>
-      <label><input id="echoToggle" type="checkbox"> EPA ECHO Facilities</label>
-      <div style="margin-top:10px; opacity:.85">Click map: drops GPS point (copyable)</div>
-    `;
-    L.DomEvent.disableClickPropagation(d);
-    return d;
+  // Add default overlay (Radiance)
+  viirsRadiance.addTo(map);
+  aoiPoly.addTo(map);
+
+  // Layer control
+  const overlays = {
+    'VIIRS DNB Radiance (bright)': viirsRadiance,
+    'Black Marble (subtle)': blackMarble,
+    'AOI Boundary': aoiPoly
   };
-  panel.addTo(map);
+  L.control.layers({ 'Mapbox Dark': mapboxDark, 'OpenStreetMap': osm }, overlays, { collapsed: false }).addTo(map);
 
-  document.addEventListener('change', (e)=>{
-    if (e.target && e.target.name==='nasa'){
-      if (e.target.value==='radiance'){ map.removeLayer(blackMarble); viirsRadiance.addTo(map); }
-      else { map.removeLayer(viirsRadiance); blackMarble.addTo(map); }
-    }
-    if (e.target && e.target.id==='aoiToggle'){ e.target.checked ? aoi.addTo(map) : map.removeLayer(aoi); }
-    if (e.target && e.target.id==='echoToggle'){
-      if (e.target.checked){
-        if (ensureEcho()){ echoLayer.addTo(map); }
-        else { toast('EPA layer unavailable (network/library). Try reload.'); e.target.checked = false; }
-      } else { if (echoLayer) map.removeLayer(echoLayer); }
-    }
-  });
-
-  // --- Identify EPA on click (if layer is on); else drop GPS -----------------
-  map.on('click', (e)=>{
-    if (echoLayer && map.hasLayer(echoLayer) && window.L && window.L.esri){
-      echoLayer.identify().on(map).at(e.latlng).layers('visible:0').tolerance(6).run((err, fc)=>{
-        if (!err && fc && fc.features && fc.features.length){
-          const a = fc.features[0].properties || fc.features[0].attributes || {};
-          const frs = a.FRSID || ''; const name = a.FAC_NAME || 'Facility';
-          const city = a.CITY || ''; const state = a.STATE || '';
-          const program = a.PROGRAM_CODES || a.PGM_SYS_ACRNM || '';
-          const dfr = frs ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}` : null;
-          L.popup({ maxWidth: 360 })
-            .setLatLng(e.latlng)
-            .setContent(`
-              <div style="min-width:240px">
-                <b>${name}</b><br/>
-                ${city ? city+', ' : ''}${state}${program ? ` · <span style="opacity:.8">${program}</span>` : ''}<br/>
-                ${dfr ? `<div style="margin-top:8px"><a target="_blank" rel="noopener" href="${dfr}">Open EPA Detailed Facility Report ↗</a></div>` : ''}
-              </div>
-            `).openOn(map);
-        } else { dropGpsPoint(e.latlng); }
-      });
-    } else { dropGpsPoint(e.latlng); }
-  });
-
-  function dropGpsPoint(latlng){
-    const m = L.marker(latlng).addTo(map);
-    const txt = `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
-    m.bindPopup(`
-      <div><b>GPS</b>: ${txt}<br/>
-      <button class="copy-btn" onclick="(async()=>{try{await navigator.clipboard.writeText('${txt}'); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy',1200);}catch(e){alert('Copy failed');}})()">Copy</button>
-      </div>
-    `).openPopup();
-  }
-
-  // --- scale bar -------------------------------------------------------------
+  // Scale bar
   L.control.scale({ position:'bottomright', imperial:false }).addTo(map);
 
+  // Drop GPS point on click with copy button
+  map.on('click', (e) => {
+    const txt = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+    const m = L.marker(e.latlng).addTo(map);
+    m.bindPopup(`
+      <div><b>GPS:</b> ${txt}<br>
+        <button class="copy-btn" onclick="(async()=>{try{await navigator.clipboard.writeText('${txt}'); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy',1200);}catch(_){alert('Copy failed');}})()">Copy</button>
+      </div>
+    `).openPopup();
+  });
+
+  // Nudge layout once tiles begin to load (prevents rare blank canvas)
+  setTimeout(() => map.invalidateSize(true), 60);
 })();
 </script>
 </body>
