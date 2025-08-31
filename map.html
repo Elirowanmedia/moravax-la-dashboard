@@ -2,109 +2,55 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Moravax Louisiana Pilot — VIIRS + EPA ECHO</title>
+  <title>Moravax Louisiana Pilot — Night Lights</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Esri Leaflet (for ArcGIS REST like ECHO) -->
-  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
-  <!-- Optional: keep map view in URL -->
-  <script src="https://unpkg.com/leaflet-hash@0.2.2/leaflet-hash.js"></script>
   <style>
     html, body, #map { height:100%; margin:0 }
     .panel {
       position:absolute; left:12px; bottom:12px;
       background:#111; color:#fff; border-radius:12px;
-      padding:10px 12px; font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      padding:10px 12px; font:13px/1.35 system-ui,Arial;
       box-shadow:0 2px 10px rgba(0,0,0,.35); opacity:.95;
     }
     .panel input { margin-right:6px }
-    .panel small { opacity:.75 }
   </style>
 </head>
 <body>
 <div id="map"></div>
 
 <script>
-  // --- CONFIG ---
   const MAPBOX_TOKEN =
     'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
 
-  // Center on Louisiana River Parishes
-  const START = { lat: 30.14, lng: -90.79, zoom: 8 };
-
-  // --- BASEMAP (Mapbox Dark) ---
+  // --- Basemap ---
   const mapboxDark = L.tileLayer(
     `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,
     { maxZoom: 19, attribution: '© OpenStreetMap · © Mapbox' }
   );
 
-  // --- INIT MAP ---
+  // --- Map init ---
   const map = L.map('map', {
-    center: [START.lat, START.lng],
-    zoom: START.zoom,
+    center: [30.14, -90.79], // Louisiana River Parishes
+    zoom: 7,
     layers: [mapboxDark]
   });
-  // Persist view in URL (#z/lat/lng)
-  new L.Hash(map);
 
-  // --- NASA VIIRS (bright DNB radiance so toggle is obvious) ---
-  // Choose a composite date; this renders clearly on a dark basemap.
-  const VIIRS_DATE = '2024-12-31';
-  const viirs = L.tileLayer(
-    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
-    { tileSize: 256, opacity: 0.80, attribution: 'NASA VIIRS DNB Radiance' }
+  // --- NASA VIIRS (Black Marble) ---
+  // Using a known stable composite date (e.g. 2024-01-01)
+  const viirsLayer = L.tileLayer(
+    'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg',
+    { tileSize: 256, attribution: 'NASA Black Marble', opacity: 0.8 }
   ).addTo(map);
 
-  // --- EPA ECHO Facilities (ArcGIS MapServer) ---
-  const echoUrl = 'https://echogeo.epa.gov/arcgis/rest/services/ECHO/Facilities/MapServer';
-  // Layer 0 = all facilities; drawn by the service as dots
-  const echo = L.esri.dynamicMapLayer({ url: echoUrl, layers: [0], opacity: 0.95 }).addTo(map);
-
-  // Click → identify → popup with DFR link
-  map.on('click', (e) => {
-    echo.identify().on(map).at(e.latlng).layers('visible:0').tolerance(6).run((err, fc) => {
-      if (err || !fc || !fc.features || !fc.features.length) return;
-      const a = fc.features[0].properties || fc.features[0].attributes || {};
-      const frs = a.FRSID || '';
-      const name = a.FAC_NAME || 'Facility';
-      const city = a.CITY || ''; const state = a.STATE || '';
-      const program = a.PROGRAM_CODES || a.PGM_SYS_ACRNM || '';
-      const dfr = frs ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}` : null;
-
-      L.popup({ maxWidth: 360 })
-        .setLatLng(e.latlng)
-        .setContent(`
-          <div style="min-width:240px">
-            <b>${name}</b><br/>
-            ${city ? city+', ' : ''}${state}${program ? ` · <span style="opacity:.8">${program}</span>` : ''}<br/>
-            ${dfr ? `<div style="margin-top:8px"><a target="_blank" rel="noopener" href="${dfr}">Open EPA Detailed Facility Report ↗</a></div>` : ''}
-          </div>
-        `)
-        .openOn(map);
-    });
-  });
-
-  // --- Optional orientation markers ---
-  L.marker([30.4583, -91.1403]).addTo(map).bindPopup('Baton Rouge');
-  L.marker([29.9511, -90.0715]).addTo(map).bindPopup('New Orleans');
-
-  // --- Layer control (top-right) ---
-  L.control.layers(
-    { 'Mapbox Dark': mapboxDark },
-    { 'NASA VIIRS DNB Radiance': viirs, 'EPA ECHO Facilities': echo },
-    { collapsed: true }
-  ).addTo(map);
-
-  // --- Simple toggle panel (bottom-left) ---
+  // --- Panel toggle ---
   const panel = L.control({ position: 'bottomleft' });
   panel.onAdd = () => {
-    const div = L.DomUtil.create('div', 'panel');
+    const div = L.DomUtil.create('div','panel');
     div.innerHTML = `
-      <div><b>Moravax Pilot Layers</b></div>
-      <label><input id="viirsToggle" type="checkbox" checked> NASA VIIRS Night Lights (bright)</label>
-      <div style="margin-top:6px"><small>Click a facility dot to open its EPA report.</small></div>
+      <b>Moravax Pilot Layers</b><br>
+      <label><input id="viirsToggle" type="checkbox" checked> NASA VIIRS Black Marble</label>
     `;
     return div;
   };
@@ -112,7 +58,7 @@
 
   document.addEventListener('change', (ev) => {
     if (ev.target && ev.target.id === 'viirsToggle') {
-      if (ev.target.checked) viirs.addTo(map); else map.removeLayer(viirs);
+      if (ev.target.checked) viirsLayer.addTo(map); else map.removeLayer(viirsLayer);
     }
   });
 </script>
