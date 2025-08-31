@@ -1,77 +1,181 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Moravax Louisiana Pilot</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://unpkg.com/leaflet/dist/leaflet.css" rel="stylesheet">
+  <title>Moravax Louisiana Pilot — River Parishes (NO ⇄ BR)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Esri Leaflet (EPA ArcGIS layers + identify) -->
+  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
+  <!-- Permalink (hash) -->
+  <script src="https://unpkg.com/leaflet-hash@0.2.2/leaflet-hash.js"></script>
   <style>
-    body { margin: 0; padding: 0; }
-    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-    .layer-control {
-      position: absolute;
-      bottom: 30px;
-      left: 10px;
-      background: rgba(0,0,0,0.85);
-      color: #fff;
-      font-family: Arial, sans-serif;
-      font-size: 13px;
-      padding: 10px;
-      border-radius: 6px;
-      box-shadow: 0 0 8px rgba(0,0,0,0.5);
+    html, body, #map { height:100%; margin:0 }
+    .panel {
+      position:absolute; left:12px; bottom:12px;
+      background:#111; color:#fff; border-radius:12px;
+      padding:10px 12px; font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      box-shadow:0 2px 10px rgba(0,0,0,.35); opacity:.95;
     }
-    .layer-control label { display: block; margin: 5px 0; cursor: pointer; }
-    .layer-control input { margin-right: 6px; }
-    .layer-control .tip {
-      margin-top: 8px;
-      font-size: 11px;
-      color: #aaa;
+    .panel label { display:block; margin-top:6px; cursor:pointer }
+    .radiance-tiles { filter: brightness(2.0) contrast(1.5); }
+    .blackmarble-tiles { filter: brightness(1.15) contrast(1.15); }
+    .title {
+      position:absolute; top:12px; left:12px;
+      background:rgba(0,0,0,.75); color:#fff; padding:8px 10px;
+      border-radius:10px; font:14px/1.35 system-ui,Arial; box-shadow:0 2px 10px rgba(0,0,0,.25);
     }
+    .copy-btn {
+      margin-top:6px; background:#333; color:#fff; border:0; border-radius:6px; padding:4px 8px; cursor:pointer;
+    }
+    .copy-btn:hover { background:#444; }
   </style>
 </head>
 <body>
-  <div id="map"></div>
-  <div class="layer-control">
-    <strong>Moravax Pilot<br>Layers</strong><br>
-    Night lights overlay:
-    <label><input type="radio" name="viirs" value="bright"> VIIRS DNB Radiance (bright)</label>
-    <label><input type="radio" name="viirs" value="subtle" checked> Black Marble (subtle)</label>
-    <div class="tip">Tip: zoom to 8–12 for best contrast</div>
-  </div>
+<div id="map"></div>
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script>
-    // Base map
-    const map = L.map('map').setView([30.0, -90.5], 7);
+<div class="title">
+  <b>Moravax Louisiana Pilot</b><br>
+  <small>AOI: River Parishes &mdash; New Orleans ⇄ Baton Rouge</small>
+</div>
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
+<script>
+  // ====== BASEMAP ============================================================
+  const map = L.map('map', { zoomControl: true });
 
-    // NASA GIBS overlays
-    const viirsBright = L.tileLayer(
-      'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_DayNightBand_ENCC/2020-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png',
-      { attribution: 'NASA VIIRS DNB Radiance (bright)' }
-    );
+  // OpenStreetMap basemap (you can replace with Mapbox Dark if you want)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(map);
 
-    const viirsSubtle = L.tileLayer(
-      'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/2020-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
-      { attribution: 'NASA Black Marble (subtle)' }
-    ).addTo(map);
+  // If you prefer Mapbox Dark, replace the layer above with:
+  // const MAPBOX_TOKEN = 'pk.YOUR_TOKEN';
+  // L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`, {
+  //   maxZoom: 19, attribution: '© OpenStreetMap · © Mapbox'
+  // }).addTo(map);
 
-    // Layer switcher
-    const radios = document.querySelectorAll('input[name="viirs"]');
-    radios.forEach(radio => {
-      radio.addEventListener('change', e => {
-        map.removeLayer(viirsBright);
-        map.removeLayer(viirsSubtle);
-        if (e.target.value === 'bright') {
-          viirsBright.addTo(map);
+  // Keep view in URL (#z/lat/lng)
+  new L.Hash(map);
+
+  // ====== NASA NIGHT LIGHTS ==================================================
+  // Bright radiance: immediately obvious for the demo
+  const VIIRS_DATE = '2024-12-31';
+  const viirsRadiance = L.tileLayer(
+    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
+    { tileSize:256, opacity:0.85, className:'radiance-tiles', attribution:'NASA VIIRS DNB Radiance' }
+  ).addTo(map);
+
+  // Subtle annual composite
+  const BLACK_MARBLE_DATE = '2024-01-01';
+  const blackMarble = L.tileLayer(
+    `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
+    { tileSize:256, opacity:0.8, className:'blackmarble-tiles', attribution:'NASA Black Marble' }
+  );
+
+  // ====== AOI (Area of Interest) polygon ====================================
+  // Simple rectangle bracketing the river-parish corridor (approx.)
+  const aoiCoords = [
+    [30.60, -91.60],
+    [30.60, -90.00],
+    [29.50, -90.00],
+    [29.50, -91.60]
+  ];
+  const aoi = L.polygon(aoiCoords, {
+    color:'#9cf', weight:2, opacity:0.9, fill:false, dashArray:'6,4'
+  }).addTo(map);
+  map.fitBounds(aoi.getBounds(), { padding:[20,20] });
+
+  // ====== EPA ECHO facilities (ArcGIS MapServer) =============================
+  // Drawn by service; click identify → DFR link
+  const echoUrl = 'https://echogeo.epa.gov/arcgis/rest/services/ECHO/Facilities/MapServer';
+  const echo = L.esri.dynamicMapLayer({ url: echoUrl, layers:[0], opacity:1.0 });
+
+  // ====== UI PANEL ===========================================================
+  const panel = L.control({ position:'bottomleft' });
+  panel.onAdd = () => {
+    const d = L.DomUtil.create('div', 'panel');
+    d.innerHTML = `
+      <b>Moravax Pilot Layers</b>
+      <div style="margin-top:6px; opacity:.8">Night lights overlay:</div>
+      <label><input type="radio" name="nasa" value="radiance" checked> VIIRS DNB Radiance (bright)</label>
+      <label><input type="radio" name="nasa" value="blackmarble"> Black Marble (subtle)</label>
+
+      <div style="margin-top:10px; opacity:.8">Context:</div>
+      <label><input id="aoiToggle" type="checkbox" checked> AOI Boundary</label>
+      <label><input id="echoToggle" type="checkbox"> EPA ECHO Facilities</label>
+
+      <div style="margin-top:10px; opacity:.8">Click map:</div>
+      <small>drops a GPS point with lat/lon + copy</small>
+    `;
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  panel.addTo(map);
+
+  // Night-lights radio
+  document.addEventListener('change', (e) => {
+    if (e.target && e.target.name === 'nasa') {
+      if (e.target.value === 'radiance') {
+        map.removeLayer(blackMarble);
+        viirsRadiance.addTo(map);
+      } else {
+        map.removeLayer(viirsRadiance);
+        blackMarble.addTo(map);
+      }
+    }
+    if (e.target && e.target.id === 'aoiToggle') {
+      e.target.checked ? aoi.addTo(map) : map.removeLayer(aoi);
+    }
+    if (e.target && e.target.id === 'echoToggle') {
+      e.target.checked ? echo.addTo(map) : map.removeLayer(echo);
+    }
+  });
+
+  // ====== EPA identify popup on click =======================================
+  map.on('click', (e) => {
+    // Identify EPA features first if layer is on; otherwise just drop GPS marker
+    if (map.hasLayer(echo)) {
+      echo.identify().on(map).at(e.latlng).layers('visible:0').tolerance(6).run((err, fc) => {
+        if (!err && fc && fc.features && fc.features.length) {
+          const a = fc.features[0].properties || fc.features[0].attributes || {};
+          const frs = a.FRSID || ''; const name = a.FAC_NAME || 'Facility';
+          const city = a.CITY || ''; const state = a.STATE || '';
+          const program = a.PROGRAM_CODES || a.PGM_SYS_ACRNM || '';
+          const dfr = frs ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}` : null;
+          L.popup({ maxWidth: 360 })
+            .setLatLng(e.latlng)
+            .setContent(`
+              <div style="min-width:240px">
+                <b>${name}</b><br/>
+                ${city ? city+', ' : ''}${state}${program ? ` · <span style="opacity:.8">${program}</span>` : ''}<br/>
+                ${dfr ? `<div style="margin-top:8px"><a target="_blank" rel="noopener" href="${dfr}">Open EPA Detailed Facility Report ↗</a></div>` : ''}
+              </div>
+            `).openOn(map);
         } else {
-          viirsSubtle.addTo(map);
+          dropGpsPoint(e.latlng);
         }
       });
-    });
-  </script>
+    } else {
+      dropGpsPoint(e.latlng);
+    }
+  });
+
+  // ====== GPS point helper ===================================================
+  function dropGpsPoint(latlng) {
+    const m = L.marker(latlng).addTo(map);
+    const txt = `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
+    const id = `cp_${Date.now()}`;
+    m.bindPopup(`
+      <div><b>GPS</b>: ${txt}<br/>
+      <button class="copy-btn" onclick="(async()=>{try{await navigator.clipboard.writeText('${txt}'); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy',1200);}catch(e){alert('Copy failed');}})()">Copy</button>
+      </div>
+    `).openPopup();
+  }
+
+  // ====== Scale bar ==========================================================
+  L.control.scale({ position:'bottomright', imperial:false }).addTo(map);
+</script>
 </body>
 </html>
