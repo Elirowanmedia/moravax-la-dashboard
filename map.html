@@ -42,8 +42,8 @@
     }
     .tag:hover{ background:#181818 }
     .note{
-      position:absolute; left:50%; transform:translateX(-50%); bottom:8px;
-      z-index:1000; color:#ddd; font:12px system-ui; opacity:.85;
+      position:absolute; left:50%; transform:translateX(-50%);
+      bottom:8px; z-index:1000; color:#ddd; font:12px system-ui; opacity:.85;
     }
     .radiance-tiles { filter: brightness(1.8) contrast(1.35); }
     .blackmarble-tiles { filter: brightness(1.15) contrast(1.15); }
@@ -88,19 +88,18 @@
 
 <script>
 (function () {
-  // ---------- CONFIG ---------------------------------------------------------
+  // ---------- CONFIG ----------
   const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpcm93YW5tZWRpYSIsImEiOiJjbWV5d2Y5MWkwN2hzMnFwbG5idDhxa2E0In0.c09E3SqLY_s5bnQzo-M7qA';
-
-  // Your Vercel proxy base (CHANGE if your domain differs)
-  const ECHO_PROXY_BASE = 'https://moravax-echo-proxy.vercel.app/api/echo';
+  // <-- Use your canonical Vercel domain with the /api route
+  const PROXY_URL = 'https://moravax-echo-proxy.vercel.app/api/echo';
 
   const VIIRS_DATE_RADIANCE = '2024-12-31';
   const BLACK_MARBLE_DATE   = '2024-01-01';
 
-  // Louisiana bounds
+  // Louisiana bounds to clip VIIRS tiles (saves draw cost)
   const LA_BOUNDS = L.latLngBounds([28.5, -94.1], [33.1, -88.7]);
 
-  // AOI rectangle
+  // AOI rectangle for River Parishes corridor
   const AOI = [
     [30.60, -91.60],
     [30.60, -90.00],
@@ -108,8 +107,8 @@
     [29.50, -91.60]
   ];
 
-  // Rough parish boxes (placeholder)
-  const ROUGH_PARISHES_GEOJSON = {
+  // Rough parish boxes (placeholder outlines)
+  const ROUGH_PARISHES_GJ = {
     "type":"FeatureCollection",
     "features":[
       { "type":"Feature", "properties":{ "name":"St. John the Baptist (rough)" },
@@ -121,73 +120,59 @@
     ]
   };
 
-  // ---------- UTIL: bounded tile layer (blank outside LA) --------------------
-  const BLANK_PNG =
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
-
+  // ---- tile layer that blanks outside bounds ----
+  const BLANK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
   const BoundedTileLayer = L.TileLayer.extend({
-    initialize: function (urlTemplate, options) {
-      L.TileLayer.prototype.initialize.call(this, urlTemplate, options);
-      this._allowed = options.allowedBounds;
-    },
+    initialize: function (url, opts) { L.TileLayer.prototype.initialize.call(this, url, opts); this._allowed = opts.allowedBounds; },
     getTileUrl: function (coords) {
       const b = this._tileCoordsToBounds(coords);
-      if (!b.intersects(this._allowed)) return BLANK_PNG;
+      if (!b.intersects(this._allowed)) return BLANK;
       return L.TileLayer.prototype.getTileUrl.call(this, coords);
     }
   });
 
-  // ---------- MAP INIT -------------------------------------------------------
-  const map = L.map('map', { zoomControl: true, minZoom: 6, maxZoom: 18 });
+  // ---------- MAP ----------
+  const map = L.map('map', { zoomControl:true, minZoom:6, maxZoom:18 });
 
   const mapboxDark = L.tileLayer(
     `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`,
-    { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }
+    { tileSize:512, zoomOffset:-1, attribution:'© Mapbox © OpenStreetMap' }
   ).addTo(map);
 
   const viirsRadiance = new BoundedTileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_DayNightBand_At_Sensor_Radiance/default/${VIIRS_DATE_RADIANCE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`,
-    { tileSize: 256, opacity: 0.75, className:'radiance-tiles', crossOrigin:true,
-      attribution:'NASA VIIRS DNB Radiance', allowedBounds: LA_BOUNDS }
+    { tileSize:256, opacity:0.75, className:'radiance-tiles', crossOrigin:true, attribution:'NASA VIIRS DNB Radiance', allowedBounds: LA_BOUNDS }
   );
 
   const blackMarble = L.tileLayer(
     `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/${BLACK_MARBLE_DATE}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg`,
-    { tileSize: 256, opacity: 0.75, className:'blackmarble-tiles', crossOrigin:true,
-      attribution:'NASA Black Marble' }
+    { tileSize:256, opacity:0.75, className:'blackmarble-tiles', crossOrigin:true, attribution:'NASA Black Marble' }
   );
 
   const aoiPoly = L.polygon(AOI, { color:'#9cf', weight:2, fill:false, dashArray:'6,4' }).addTo(map);
-  const parishes = L.geoJSON(ROUGH_PARISHES_GEOJSON, {
+  const parishes = L.geoJSON(ROUGH_PARISHES_GJ, {
     style: { color:'#8bd', weight:1.5, fill:false, dashArray:'4,6' },
-    onEachFeature: (feat, layer) => {
+    onEachFeature: (f, layer) => {
       const c = layer.getBounds().getCenter();
-      L.marker(c, {interactive:false, icon:L.divIcon({className:'parish-label', html:feat.properties.name})}).addTo(map);
+      L.marker(c, {interactive:false, icon:L.divIcon({className:'parish-label', html:f.properties.name})}).addTo(map);
     }
   }).addTo(map);
 
-  const clusters = L.markerClusterGroup({ chunkedLoading:true, spiderfyOnMaxZoom:true });
-  const defaultIcon = L.icon({
-    iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-    shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-    iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[0,-30], shadowSize:[41,41]
-  });
-
+  // start view
   map.fitBounds(aoiPoly.getBounds(), { padding:[20,20] });
   if (map.getZoom() > 9) map.setZoom(9);
 
-  // ---------------- UI -------------------------------------------------------
+  // ---------- UI wiring ----------
   const radios = Array.from(document.querySelectorAll('input[name="ol"]'));
   const opacity = document.getElementById('opacity');
   const zoomHint = document.getElementById('zoomHint');
   const echoStatus = document.getElementById('echoStatus');
 
-  function setOverlayFromRadio() {
-    const chosen = radios.find(r => r.checked)?.value;
+  function setOverlayFromRadio () {
+    const v = radios.find(r => r.checked)?.value;
     [viirsRadiance, blackMarble].forEach(l => l.remove());
-    if (chosen === 'viirs') viirsRadiance.addTo(map);
-    if (chosen === 'bm')    blackMarble.addTo(map);
+    if (v === 'viirs') viirsRadiance.addTo(map);
+    if (v === 'bm')    blackMarble.addTo(map);
   }
   radios.forEach(r => r.addEventListener('change', () => { setOverlayFromRadio(); applyScaleRules(); }));
   opacity.addEventListener('input', () => {
@@ -196,7 +181,7 @@
   });
 
   const jumps = {
-    aoi:  aoiPoly.getBounds(),
+    aoi:   aoiPoly.getBounds(),
     denka: L.latLngBounds([ [30.12,-90.60], [30.02,-90.40] ]),
     br:    L.latLngBounds([ [30.55,-91.30], [30.35,-91.05] ]),
     nola:  L.latLngBounds([ [30.08,-90.20], [29.85,-90.00] ])
@@ -208,47 +193,57 @@
     });
   });
 
-  function applyScaleRules() {
+  function applyScaleRules () {
     const z = map.getZoom();
     const chosen = radios.find(r => r.checked)?.value;
     zoomHint.style.display = (chosen === 'viirs' && z > 8) ? 'block' : 'none';
 
     if (chosen === 'viirs') {
       if (z <= 8) { if (!map.hasLayer(viirsRadiance)) viirsRadiance.addTo(map); }
-      else        { if (map.hasLayer(viirsRadiance)) viirsRadiance.remove(); }
+      else        { if (map.hasLayer(viirsRadiance))  viirsRadiance.remove(); }
     }
     if (chosen === 'bm') {
       if (z >= 9 && z <= 12) { if (!map.hasLayer(blackMarble)) blackMarble.addTo(map); }
-      else                   { if (map.hasLayer(blackMarble)) blackMarble.remove(); }
+      else                   { if (map.hasLayer(blackMarble))  blackMarble.remove(); }
     }
   }
   map.on('zoomend', applyScaleRules);
   setOverlayFromRadio();
   applyScaleRules();
 
-  // ---------------- Load facilities via the proxy ----------------------------
-  async function loadEchoFacilities() {
+  // ---------- ECHO facilities via your proxy ----------
+  const clusters = L.markerClusterGroup({ chunkedLoading:true, spiderfyOnMaxZoom:true });
+  const defaultIcon = L.icon({
+    iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[0,-30], shadowSize:[41,41]
+  });
+
+  async function loadEchoFacilities () {
     try {
       echoStatus.style.display='block';
       echoStatus.textContent='Loading EPA ECHO facilities for Louisiana…';
 
-      const params = new URLSearchParams({
+      const qs = new URLSearchParams({
         endpoint: 'rest_services.get_facility_info',
         state_abbr: 'LA',
-        output: 'JSON',
-        pageno: '1',
-        pagesize: '10000'
+        pagesize: '10000',
+        output: 'JSON'
       });
+      const url = `${PROXY_URL}?${qs.toString()}`;
 
-      const url = `${ECHO_PROXY_BASE}?${params.toString()}`;
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-
-      if (!res.ok) throw new Error(`Proxy ${res.status} ${res.statusText}`);
+      const res = await fetch(url, { headers:{'Accept':'application/json'} });
       const data = await res.json();
+
+      if (!res.ok || data.ok === false) {
+        const msg = data.error || `${res.status} ${res.statusText}`;
+        throw new Error(msg);
+      }
 
       const facilities =
         (data.Results && data.Results.Facilities) ||
-        data.Facilities || [];
+        data.Facilities || data.facilities || [];
 
       let count = 0;
       facilities.forEach(f => {
@@ -257,13 +252,13 @@
         if (Number.isFinite(lat) && Number.isFinite(lon) && LA_BOUNDS.contains([lat,lon])) {
           const name = f.FacilityName || f.FacName || f.name || 'Facility';
           const frs  = f.FRSId || f.FRS || f.RegistryId || '';
-          const dfrLink = frs
+          const dfr  = frs
             ? `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(frs)}`
             : 'https://echo.epa.gov/facilities/facility-search';
-
-          const m = L.marker([lat,lon], { icon: defaultIcon })
-            .bindPopup(`<b>${name}</b><br><a href="${dfrLink}" target="_blank">EPA Detailed Facility Report ↗</a>`);
-          clusters.addLayer(m);
+          clusters.addLayer(
+            L.marker([lat,lon], { icon: defaultIcon })
+             .bindPopup(`<b>${name}</b><br><a href="${dfr}" target="_blank">EPA Detailed Facility Report ↗</a>`)
+          );
           count++;
         }
       });
@@ -273,12 +268,12 @@
     } catch (err) {
       console.error(err);
       echoStatus.textContent =
-        'EPA ECHO: could not load live facilities (rate limit, CORS, or network). Map still works without points.';
+        'EPA ECHO: could not load facilities (check proxy URL & API key). Map still works without points.';
     }
   }
   loadEchoFacilities();
 
-  // Quick GPS pin
+  // quick GPS pin
   map.on('click', (e) => {
     const s = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
     L.marker(e.latlng).addTo(map).bindPopup(`<b>GPS</b> ${s}`).openPopup();
